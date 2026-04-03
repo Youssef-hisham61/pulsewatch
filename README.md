@@ -1,6 +1,6 @@
 # PulseWatch
 
-A production-grade service monitoring platform. Registers HTTP/HTTPS endpoints, pings them on a configurable interval, and exposes uptime and response-time history through a REST API secured with JWT authentication and role-based access control.
+A production-grade service monitoring platform/project. Registers HTTP/HTTPS endpoints, pings them on a configurable interval, and exposes uptime and response-time history through a REST API secured with JWT authentication and role-based access control.
 
 ## Architecture
 
