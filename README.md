@@ -1,8 +1,13 @@
 # PulseWatch
 
-A production-grade service monitoring platform/project. Registers HTTP/HTTPS endpoints, pings them on a configurable interval, and exposes uptime and response-time history through a REST API secured with JWT authentication and role-based access control.
+A service monitoring platform I built as a DevOps portfolio project.
+You register HTTP/HTTPS endpoints, it pings them on a configurable set interval,
+and stores uptime and response time history. The API is secured with
+JWT auth and role-based access control.
 
-## Architecture
+## How it works
+
+Two completely independent Node.js processes — no shared code between them:
 
 ```
 ┌──────────────────────────┐       ┌──────────────────────────┐
@@ -21,82 +26,80 @@ A production-grade service monitoring platform/project. Registers HTTP/HTTPS end
 └──────────────────────────┘       └──────────────────────────┘
 ```
 
-Both processes are independent — no shared code, no IPC. They communicate only through the database.
+The API handles requests and auth. The worker runs independently in
+the background checking services and writing results. Both talk only
+through the database — no IPC, no shared memory.
 
-## Prerequisites
+I built it this way intentionally so each service can be containerized
+and scaled independently in later phases.
 
-| Requirement | Version |
-|---|---|
-| Node.js | ≥ 18.0.0 (built-in `fetch` and `AbortSignal.timeout` required) |
-| PostgreSQL | ≥ 14 |
-| npm | ≥ 9 |
+## Requirements
 
-## Quick Start
+- Node.js 18+ (uses native fetch and AbortSignal.timeout)
+- PostgreSQL 14+
+- npm 9+
 
-### 1. Create and configure the database
+## Setup
+
+**1. Database**
 
 ```bash
 psql -U postgres -c "CREATE DATABASE pulsewatch;"
 psql -U postgres -d pulsewatch -f db/schema.sql
 ```
 
-### 2. Configure environment variables
+**2. Environment**
 
 ```bash
 cp .env.example .env
-# Open .env and set DATABASE_URL, JWT_SECRET, and any other values
 ```
 
-### 3. Install dependencies
+Open `.env` and fill in your `DATABASE_URL` and `JWT_SECRET` at minimum.
+
+**3. Dependencies**
 
 ```bash
-cd api    && npm install && cd ..
+cd api && npm install && cd ..
 cd worker && npm install && cd ..
 ```
 
-### 4. Start the API server
+**4. Run**
 
 ```bash
-cd api
-npm start
-# API is now listening on http://localhost:3000
+# Terminal 1 - API server
+cd api && npm start
+
+# Terminal 2 - Background worker
+cd worker && npm start
 ```
 
-### 5. Start the background worker (separate terminal)
+For development with auto-restart:
 
 ```bash
-cd worker
-npm start
-# Worker runs immediately, then every CHECK_INTERVAL_MS milliseconds
-```
-
-### Development mode (auto-restart on file change)
-
-```bash
-# Terminal 1
 cd api && npm run dev
-
-# Terminal 2
 cd worker && npm run dev
 ```
 
 ## Environment Variables
 
-Both services read from the `.env` file at the **project root** (`pulsewatch/.env`). Copy `.env.example` and fill in your values — never commit the actual `.env` file.
+Configuration lives in `.env` at the project root.
+The `.env.example` file lists everything the app needs.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `PORT` | No | `3000` | Port the API server listens on |
-| `DATABASE_URL` | **Yes** | — | PostgreSQL connection string, e.g. `postgresql://user:pass@localhost:5432/pulsewatch` |
-| `JWT_SECRET` | **Yes** | — | Secret used to sign JWT tokens. Use a long random string in production |
-| `JWT_EXPIRES_IN` | No | `7d` | Token lifetime (any value accepted by the `jsonwebtoken` library) |
-| `CHECK_INTERVAL_MS` | No | `30000` | Worker polling interval in milliseconds |
-| `NODE_ENV` | No | `development` | Runtime environment (`development` / `production`) |
-| `LOG_LEVEL` | No | `info` | Winston log level: `error`, `warn`, `info`, `debug` |
+## Environment Variables
 
-## API Reference
+| Variable            | Required | Default       | Description                                                                           |
+| ------------------- | -------- | ------------- | ------------------------------------------------------------------------------------- |
+| `PORT`              | No       | `3000`        | Port the API server listens on                                                        |
+| `DATABASE_URL`      | **Yes**  | —             | PostgreSQL connection string, e.g. `postgresql://user:pass@localhost:5432/pulsewatch` |
+| `JWT_SECRET`        | **Yes**  | —             | Secret used to sign JWT tokens. Use a long random string in production                |
+| `JWT_EXPIRES_IN`    | No       | `7d`          | Token lifetime (any value accepted by the `jsonwebtoken` library)                     |
+| `CHECK_INTERVAL_MS` | No       | `30000`       | Worker polling interval in milliseconds                                               |
+| `NODE_ENV`          | No       | `development` | Runtime environment (`development` / `production`)                                    |
+| `LOG_LEVEL`         | No       | `info`        | Winston log level: `error`, `warn`, `info`, `debug`                                   |
 
-All endpoints except `/health`, `/ready`, `POST /auth/register`, and `POST /auth/login` require a valid JWT in the request header:
+## API
+
+Protected endpoints require a JWT in the Authorization header:
 
 ```
 Authorization: Bearer <token>
@@ -104,52 +107,42 @@ Authorization: Bearer <token>
 
 ---
 
-### Authentication
+### Auth
 
-#### `POST /auth/register`
+#### POST /auth/register
 
 Create a new user account.
 
-**Request body**
-
 ```json
 {
-  "email": "alice@example.com",
-  "password": "supersecret",
+  "email": "user@example.com",
+  "password": "password123",
   "role": "viewer"
 }
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `email` | Yes | Must be a valid email address |
-| `password` | Yes | Minimum 8 characters |
-| `role` | No | `admin`, `developer`, or `viewer` (default: `viewer`) |
+Role defaults to `viewer` if not provided. Options: `admin`, `developer`, `viewer`.
 
-**Responses**
-
-| Status | Meaning |
-|---|---|
-| `201 Created` | User created successfully |
-| `400 Bad Request` | Validation error (see `error` field) |
-| `409 Conflict` | Email already registered |
+| Status            | Meaning                   |
+| ----------------- | ------------------------- |
+| `201 Created`     | User created successfully |
+| `400 Bad Request` | Validation error          |
+| `409 Conflict`    | Email already registered  |
 
 ---
 
-#### `POST /auth/login`
+#### POST /auth/login
 
 Authenticate and receive a JWT token.
 
-**Request body**
-
 ```json
 {
-  "email": "alice@example.com",
-  "password": "supersecret"
+  "email": "user@example.com",
+  "password": "password123"
 }
 ```
 
-**Response `200 OK`**
+Returns:
 
 ```json
 {
@@ -162,168 +155,121 @@ Authenticate and receive a JWT token.
 
 ### Services
 
-#### `GET /services`
+#### GET /services
 
-Return all registered services.
+Returns all registered services. Available to all roles.
 
-**Roles:** `viewer`, `developer`, `admin`
-
-**Response `200 OK`**
-
-```json
-[
-  {
-    "id": 1,
-    "name": "Production API",
-    "url": "https://api.example.com/health",
-    "owner_id": 3,
-    "owner_email": "alice@example.com",
-    "created_at": "2024-01-15T10:00:00.000Z"
-  }
-]
-```
+| Status             | Meaning                  |
+| ------------------ | ------------------------ |
+| `200 OK`           | Array of service objects |
+| `401 Unauthorized` | Missing or invalid token |
 
 ---
 
-#### `POST /services`
+#### POST /services — admin only
 
 Register a new service to monitor.
 
-**Roles:** `admin` only
-
-**Request body**
-
 ```json
 {
-  "name": "Production API",
+  "name": "My API",
   "url": "https://api.example.com/health"
 }
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `name` | Yes | 1–255 characters |
-| `url` | Yes | Must be a valid `http://` or `https://` URL |
-
-**Responses**
-
-| Status | Meaning |
-|---|---|
-| `201 Created` | Service registered; full service object returned |
-| `400 Bad Request` | Validation error |
-| `403 Forbidden` | Caller is not an admin |
+| Status            | Meaning            |
+| ----------------- | ------------------ |
+| `201 Created`     | Service registered |
+| `400 Bad Request` | Validation error   |
+| `403 Forbidden`   | Not an admin       |
 
 ---
 
-#### `DELETE /services/:id`
+#### DELETE /services/:id — admin only
 
-Remove a service and all its monitoring history.
+Deletes the service and all its monitoring history.
 
-**Roles:** `admin` only
-
-**Responses**
-
-| Status | Meaning |
-|---|---|
-| `200 OK` | `{ "message": "Service deleted successfully" }` |
-| `400 Bad Request` | `:id` is not a valid integer |
-| `403 Forbidden` | Caller is not an admin |
-| `404 Not Found` | No service with that ID |
+| Status          | Meaning              |
+| --------------- | -------------------- |
+| `200 OK`        | Deleted successfully |
+| `403 Forbidden` | Not an admin         |
+| `404 Not Found` | Service not found    |
 
 ---
 
-#### `GET /services/:id/results`
+#### GET /services/:id/results
 
-Return the 100 most recent monitoring results for a service.
+Returns the 100 most recent monitoring results for a service.
+Available to all roles.
 
-**Roles:** `viewer`, `developer`, `admin`
+`status` is `"UP"` or `"DOWN"`, `response_time` is in milliseconds and
+is `null` when the service is unreachable.
 
-**Response `200 OK`**
-
-```json
-{
-  "service": {
-    "id": 1,
-    "name": "Production API",
-    "url": "https://api.example.com/health",
-    "owner_id": 3,
-    "owner_email": "alice@example.com",
-    "created_at": "2024-01-15T10:00:00.000Z"
-  },
-  "results": [
-    {
-      "id": 512,
-      "service_id": 1,
-      "status": "UP",
-      "response_time": 142,
-      "checked_at": "2024-01-15T11:30:00.000Z"
-    }
-  ]
-}
-```
-
-`status` is either `"UP"` (service responded) or `"DOWN"` (network error or timeout).  
-`response_time` is in milliseconds.
+| Status          | Meaning           |
+| --------------- | ----------------- |
+| `200 OK`        | Results array     |
+| `404 Not Found` | Service not found |
 
 ---
 
-### Health & Readiness Probes
+### Health
 
-#### `GET /health`
+#### GET /health
 
-Kubernetes **liveness** probe. Returns `200` as long as the Node.js process is alive.
+Always returns `200` as long as the process is running.
+Used as a Kubernetes liveness probe.
 
 ```json
 { "status": "ok" }
 ```
 
-#### `GET /ready`
+#### GET /ready
 
-Kubernetes **readiness** probe. Executes `SELECT 1` against PostgreSQL.
+Checks database connectivity. Returns `200` if reachable, `503` if not.
+Used as a Kubernetes readiness probe.
 
-| Status | Meaning |
-|---|---|
-| `200 OK` | `{ "status": "ready" }` — DB reachable |
-| `503 Service Unavailable` | `{ "status": "unavailable", "error": "..." }` — DB unreachable |
+```json
+{ "status": "ready" }
+```
 
 ---
 
-## Role Permissions Matrix
+## Permissions
 
-| Endpoint | viewer | developer | admin |
-|---|:---:|:---:|:---:|
-| `POST /auth/register` | ✓ | ✓ | ✓ |
-| `POST /auth/login` | ✓ | ✓ | ✓ |
-| `GET /services` | ✓ | ✓ | ✓ |
-| `POST /services` | ✗ | ✗ | ✓ |
-| `DELETE /services/:id` | ✗ | ✗ | ✓ |
-| `GET /services/:id/results` | ✓ | ✓ | ✓ |
-| `GET /health` | ✓ | ✓ | ✓ |
-| `GET /ready` | ✓ | ✓ | ✓ |
+| Endpoint                    | viewer | developer | admin |
+| --------------------------- | :----: | :-------: | :---: |
+| `POST /auth/register`       |   ✓    |     ✓     |   ✓   |
+| `POST /auth/login`          |   ✓    |     ✓     |   ✓   |
+| `GET /services`             |   ✓    |     ✓     |   ✓   |
+| `POST /services`            |   ✗    |     ✗     |   ✓   |
+| `DELETE /services/:id`      |   ✗    |     ✗     |   ✓   |
+| `GET /services/:id/results` |   ✓    |     ✓     |   ✓   |
+| `GET /health`               |   ✓    |     ✓     |   ✓   |
+| `GET /ready`                |   ✓    |     ✓     |   ✓   |
 
-## Database Schema
+## Schema
 
 ```
-roles              users                  services
-─────────────      ──────────────────     ──────────────────
-id   SERIAL PK     id   SERIAL PK         id         SERIAL PK
-name VARCHAR UQ     email      VARCHAR UQ  name       VARCHAR
-                   password_hash VARCHAR  url        VARCHAR
-                   role_id   → roles.id   owner_id → users.id
-                   created_at TIMESTAMPTZ created_at TIMESTAMPTZ
+roles              users                    services
+─────────────      ────────────────────     ──────────────────
+id   SERIAL PK     id    SERIAL PK          id         SERIAL PK
+name VARCHAR UQ    email VARCHAR UQ         name       VARCHAR
+                   password_hash VARCHAR    url        VARCHAR
+                   role_id → roles.id       owner_id → users.id
+                   created_at TIMESTAMPTZ   created_at TIMESTAMPTZ
 
 monitoring_results
 ──────────────────────
 id            SERIAL PK
 service_id  → services.id  (ON DELETE CASCADE)
-status        VARCHAR   ('UP' | 'DOWN')
-response_time INTEGER   (milliseconds)
+status        VARCHAR        'UP' | 'DOWN'
+response_time INTEGER        milliseconds, null if DOWN
 checked_at    TIMESTAMPTZ
 ```
 
 ## Logging
 
-All logs are emitted as JSON to stdout:
+Structured JSON logs to stdout. Example:
 
 ```json
 {
@@ -334,23 +280,23 @@ All logs are emitted as JSON to stdout:
   "path": "/auth/login",
   "statusCode": 200,
   "durationMs": 38,
-  "timestamp": "2024-01-15T11:30:00.123Z"
+  "timestamp": "2026-04-03T01:11:22.158Z"
 }
 ```
 
-Set `LOG_LEVEL=debug` for verbose output during development.
+Set `LOG_LEVEL=debug` for verbose output.
 
-## Project Roadmap
+## Roadmap
 
-This repository is **Phase 1** of a multi-phase DevOps portfolio project:
+This is Phase 1 of a multi-phase project. The same codebase runs
+across all phases — every config value comes from environment variables
+so nothing needs to change between local, Docker, Kubernetes, and AWS.
 
-| Phase | Description | Status |
-|---|---|---|
-| **1** | Node.js application with PostgreSQL | ✅ Complete |
-| **2** | Docker and Docker Compose | Upcoming |
-| **3** | Kubernetes manifests and Helm chart | Upcoming |
-| **4** | Jenkins CI/CD pipeline and Terraform | Upcoming |
-| **5** | Prometheus metrics and Grafana dashboards | Upcoming |
-| **6** | Full deployment to AWS EKS with RDS | Upcoming |
-
-Every configuration value comes from environment variables so the **same codebase runs unchanged** across all phases: local development, Docker, Kubernetes, and AWS.
+| Phase | What gets added           | Status   |
+| ----- | ------------------------- | -------- |
+| 1     | Node.js + PostgreSQL      | ✅ Done  |
+| 2     | Docker + Docker Compose   | Upcoming |
+| 3     | Kubernetes + Helm         | Upcoming |
+| 4     | Jenkins CI/CD + Terraform | Upcoming |
+| 5     | Prometheus + Grafana      | Upcoming |
+| 6     | AWS EKS + RDS             | Upcoming |
