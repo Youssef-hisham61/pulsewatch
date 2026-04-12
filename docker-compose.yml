@@ -1,0 +1,51 @@
+services:
+  api:
+    build: ./api
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  worker:
+    build: ./worker
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+  postgres:
+    build: ./db
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    volumes:
+      - postgres-db-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dev_db_docker", "-d", "pulsewatch_DEV"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres-db-dev:
+    driver: local
