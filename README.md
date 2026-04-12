@@ -7,39 +7,84 @@ JWT auth and role-based access control.
 
 ## How it works
 
-Two completely independent Node.js processes — no shared code between them:
+Four containerized services working together — no shared code between the application processes:
 
 ```
-┌──────────────────────────┐       ┌──────────────────────────┐
-│       API Server         │       │     Background Worker    │
-│  (Express · JWT · RBAC)  │       │  (polls every 30 s)      │
-│                          │       │                          │
-│  POST  /auth/register    │       │  SELECT * FROM services  │
-│  POST  /auth/login       │       │  fetch each URL          │
-│  GET   /services         │       │  INSERT monitoring_result│
-│  POST  /services         │       └────────────┬─────────────┘
-│  DELETE /services/:id    │                    │
-│  GET   /services/:id/    │                    │ reads / writes
-│        results           │                    │
-│  GET   /health           │       ┌────────────▼─────────────┐
-│  GET   /ready  ──────────┼──────▶│       PostgreSQL         │
-└──────────────────────────┘       └──────────────────────────┘
+                         ┌──────────────────────────┐
+                         │         Nginx            │
+                         │    (reverse proxy)       │
+                         │     rate limiting        │
+                         └────────────┬─────────────┘
+                                      │ port 80
+                         ┌────────────▼─────────────┐       ┌──────────────────────────┐
+                         │       API Server         │       │     Background Worker    │
+                         │  (Express · JWT · RBAC)  │       │  (polls every 30 s)      │
+                         │                          │       │                          │
+                         │  POST  /auth/register    │       │  SELECT * FROM services  │
+                         │  POST  /auth/login       │       │  fetch each URL          │
+                         │  GET   /services         │       │  INSERT monitoring_result│
+                         │  POST  /services         │       └────────────┬─────────────┘
+                         │  DELETE /services/:id    │                    │
+                         │  GET   /services/:id/    │                    │ reads / writes
+                         │        results           │                    │
+                         │  GET   /health           │       ┌────────────▼─────────────┐
+                         │  GET   /ready  ──────────┼──────▶│       PostgreSQL         │
+                         └──────────────────────────┘       └──────────────────────────┘
 ```
 
 The API handles requests and auth. The worker runs independently in
 the background checking services and writing results. Both talk only
-through the database — no IPC, no shared memory.
+through the database — no IPC, no shared memory. Nginx sits in front
+of the API as a reverse proxy, handling all incoming traffic on port 80.
 
 I built it this way intentionally so each service can be containerized
 and scaled independently in later phases.
 
-## Requirements
+## Running with Docker (the recommended way) (stable)
 
-- Node.js 18+ (uses native fetch and AbortSignal.timeout)
-- PostgreSQL 14+
-- npm 9+
+The easiest way to run PulseWatch is with Docker Compose — one command
+starts all four services.
 
-## Setup
+**1. Environment**
+
+```bash
+cp .env.example .env.docker
+```
+
+Open `.env.docker` and fill in your values. See the environment variables
+table below for what's needed.
+
+**2. Start everything**
+
+```bash
+docker compose --env-file .env.docker up --build
+```
+
+This starts PostgreSQL, the API server, the background worker, and Nginx.
+The schema is initialized automatically on first run.
+
+**3. Test it**
+
+```bash
+curl http://localhost/health
+```
+
+All API traffic goes through Nginx on port 80 — no port number needed.
+
+**4. Stop everything**
+
+```bash
+docker compose down
+```
+
+Data persists in a named Docker volume between restarts. To wipe everything
+including the database:
+
+```bash
+docker compose down -v
+```
+
+## Running locally (without Docker)
 
 **1. Database**
 
@@ -73,29 +118,52 @@ cd api && npm start
 cd worker && npm start
 ```
 
-For development with auto-restart:
+## Project Structure
 
-```bash
-cd api && npm run dev
-cd worker && npm run dev
+```
+pulsewatch/
+├── api/                  # Express API server
+│   ├── src/
+│   │   ├── config/       # Environment config, DB connection
+│   │   ├── controllers/  # Request handlers
+│   │   ├── middleware/   # Auth, RBAC, logging
+│   │   ├── models/       # DB query functions
+│   │   └── routes/       # Route definitions
+│   ├── Dockerfile
+│   └── index.js
+├── worker/               # Background monitoring worker
+│   ├── src/
+│   │   ├── checker.js    # Ping logic
+│   │   └── scheduler.js  # Interval management
+│   ├── Dockerfile
+│   └── index.js
+├── db/
+│   ├── Dockerfile        # Custom postgres image with schema baked in
+│   └── schema.sql
+├── nginx/
+│   ├── Dockerfile
+│   └── nginx.conf        # Reverse proxy + rate limiting config
+├── docker-compose.yml
+└── .env.example
 ```
 
 ## Environment Variables
 
-Configuration lives in `.env` at the project root.
-The `.env.example` file lists everything the app needs.
+Two env files — `.env` for local development, `.env.docker` for Docker Compose.
+Neither is committed to the repository. Copy `.env.example` to get started.
 
-## Environment Variables
-
-| Variable            | Required | Default       | Description                                                                           |
-| ------------------- | -------- | ------------- | ------------------------------------------------------------------------------------- |
-| `PORT`              | No       | `3000`        | Port the API server listens on                                                        |
-| `DATABASE_URL`      | **Yes**  | —             | PostgreSQL connection string, e.g. `postgresql://user:pass@localhost:5432/pulsewatch` |
-| `JWT_SECRET`        | **Yes**  | —             | Secret used to sign JWT tokens. Use a long random string in production                |
-| `JWT_EXPIRES_IN`    | No       | `7d`          | Token lifetime (any value accepted by the `jsonwebtoken` library)                     |
-| `CHECK_INTERVAL_MS` | No       | `30000`       | Worker polling interval in milliseconds                                               |
-| `NODE_ENV`          | No       | `development` | Runtime environment (`development` / `production`)                                    |
-| `LOG_LEVEL`         | No       | `info`        | Winston log level: `error`, `warn`, `info`, `debug`                                   |
+| Variable            | Required     | Default       | Description                                                                           |
+| ------------------- | ------------ | ------------- | ------------------------------------------------------------------------------------- |
+| `PORT`              | No           | `3000`        | Port the API server listens on                                                        |
+| `DATABASE_URL`      | **Yes**      | —             | PostgreSQL connection string, e.g. `postgresql://user:pass@localhost:5432/pulsewatch` |
+| `JWT_SECRET`        | **Yes**      | —             | Secret used to sign JWT tokens. Use a long random string in production                |
+| `JWT_EXPIRES_IN`    | No           | `7d`          | Token lifetime (any value accepted by the `jsonwebtoken` library)                     |
+| `CHECK_INTERVAL_MS` | No           | `30000`       | Worker polling interval in milliseconds                                               |
+| `NODE_ENV`          | No           | `development` | Runtime environment (`development` / `production`)                                    |
+| `LOG_LEVEL`         | No           | `info`        | Winston log level: `error`, `warn`, `info`, `debug`                                   |
+| `POSTGRES_USER`     | Yes (Docker) | —             | PostgreSQL username for Docker Compose                                                |
+| `POSTGRES_PASSWORD` | Yes (Docker) | —             | PostgreSQL password for Docker Compose                                                |
+| `POSTGRES_DB`       | Yes (Docker) | —             | PostgreSQL database name for Docker Compose                                           |
 
 ## API
 
@@ -104,6 +172,11 @@ Protected endpoints require a JWT in the Authorization header:
 ```
 Authorization: Bearer <token>
 ```
+
+All traffic goes through Nginx on port 80. Rate limiting is applied:
+
+- `/auth/` endpoints — 3 requests per second per IP
+- All other endpoints — 10 requests per second per IP
 
 ---
 
@@ -116,7 +189,7 @@ Create a new user account.
 ```json
 {
   "email": "user@example.com",
-  "password": "password123",
+  "password": "your_pass:)",
   "role": "viewer"
 }
 ```
@@ -138,7 +211,7 @@ Authenticate and receive a JWT token.
 ```json
 {
   "email": "user@example.com",
-  "password": "password123"
+  "password": "your_pass"
 }
 ```
 
@@ -288,15 +361,19 @@ Set `LOG_LEVEL=debug` for verbose output.
 
 ## Roadmap
 
-This is Phase 1 of a multi-phase project. The same codebase runs
-across all phases — every config value comes from environment variables
-so nothing needs to change between local, Docker, Kubernetes, and AWS.
+This is a multi-phase project. The same codebase runs across all phases —
+every config value comes from environment variables so nothing needs to
+change between local, Docker, Kubernetes, and AWS.
 
-| Phase | What gets added           | Status   |
-| ----- | ------------------------- | -------- |
-| 1     | Node.js + PostgreSQL      | ✅ Done  |
-| 2     | Docker + Docker Compose   | Upcoming |
-| 3     | Kubernetes + Helm         | Upcoming |
-| 4     | Jenkins CI/CD + Terraform | Upcoming |
-| 5     | Prometheus + Grafana      | Upcoming |
-| 6     | AWS EKS + RDS             | Upcoming |
+| Phase | What gets added                 | Status   |
+| ----- | ------------------------------- | -------- |
+| 1     | Node.js + PostgreSQL            | ✅ Done  |
+| 2     | Docker + Docker Compose + Nginx | ✅ Done  |
+| 3     | Kubernetes + Helm               | Upcoming |
+| 4     | Jenkins CI/CD + Terraform       | Upcoming |
+| 5     | Prometheus + Grafana            | Upcoming |
+| 6     | AWS EKS + RDS                   | Upcoming |
+
+```
+
+```

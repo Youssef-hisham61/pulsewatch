@@ -4,3 +4,7 @@ npm-debug.log*
 *.log
 .DS_Store
 CLAUDE.md
+.env.docker
+.dockerignore
+*.tar.gz
+.DS_Store
