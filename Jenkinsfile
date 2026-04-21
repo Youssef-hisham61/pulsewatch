@@ -73,7 +73,7 @@ pipeline {
             steps {
                 echo "pushing docker images to dockerhub repo"
                  withCredentials([usernamePassword(credentialsId: 'docker-repo-cred', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-             sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin"
+             sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin'
                 sh "docker push ${DOCKER_REPO}:api-${IMAGE_TAG}"
                 sh "docker push ${DOCKER_REPO}:worker-${IMAGE_TAG}"
                 sh "docker push ${DOCKER_REPO}:nginx-${IMAGE_TAG}"
@@ -102,7 +102,7 @@ pipeline {
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
                 sh "git add api/package.json api/package-lock.json "
                 sh "git commit -m \"ci: bump version to ${IMAGE_TAG}\""
-                sh "git push https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/Youssef-hisham61/pulsewatch.git HEAD:${BRANCH_NAME}"          
+                sh 'git push https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/Youssef-hisham61/pulsewatch.git HEAD:$BRANCH_NAME'          
             
             }
         }}
