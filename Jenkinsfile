@@ -12,11 +12,6 @@ pipeline {
     }
     stages {
         stage('increment build version'){
-        agent {
-            docker {
-                image 'node:18-alpine'
-            }
-        }
          steps{
             echo "incrementing build version"    
             sh   "cd api && npm version patch --no-git-tag-version" 
@@ -88,6 +83,12 @@ pipeline {
         
         }
    stage('commiting the version to git repo') {
+           when {
+                anyOf {
+                     branch 'main'
+                     branch 'develop'
+                }
+            }
             steps{
                 withCredentials([
                     usernamePassword(
@@ -96,11 +97,12 @@ pipeline {
                         passwordVariable:"GITHUB_TOKEN"
                     )   
                 ]) {
+                sh "git checkout ${BRANCH_NAME}"
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
                 sh "git add api/package.json api/package-lock.json "
                 sh "git commit -m \"ci: bump version to ${IMAGE_TAG}\""
-                sh "git push https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/Youssef-hisham61/pulsewatch.git HEAD:develop"          
+                sh "git push https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/Youssef-hisham61/pulsewatch.git HEAD:${BRANCH_NAME}"          
             
             }
         }}
