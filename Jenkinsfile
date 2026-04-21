@@ -77,7 +77,7 @@ pipeline {
         stage('push images to repo') {
             steps {
                 echo "pushing docker images to dockerhub repo"
-                 withCredentials([usernamePassword(credentialsId: 'dockerhub-repo-cred', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                 withCredentials([usernamePassword(credentialsId: 'docker-repo-cred', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
              sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin"
                 sh "docker push ${DOCKER_REPO}:api-${IMAGE_TAG}"
                 sh "docker push ${DOCKER_REPO}:worker-${IMAGE_TAG}"
