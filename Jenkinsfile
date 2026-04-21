@@ -1,10 +1,35 @@
 pipeline {
     agent any
+   // parameters {
+       // choice(
+          //  name:'VERSION_TYPE'
+          //  choices: ['major',"minor", "patch"]
+          //  description:"choose your patching method"
+       // )
+   // }
     environment {
-        DOCKER_REPO = 'yh61/pulsewatch-images-docker-repo'
-        IMAGE_TAG = 'latest'    
+        DOCKER_REPO = 'yh61/pulsewatch-images-docker-repo'  
     }
     stages {
+        stage('increment build version'){
+        agent {
+            docker {
+                image 'node:18-alpine'
+            }
+        }
+         steps{
+            echo "incrementing build version"    
+            sh   "cd api && npm version patch --no-git-tag-version" 
+            script {
+                def version = sh (
+                   script: "cd api && node -e \"console.log(require('./package.json').version)\"",
+                   returnStdout: true
+                ).trim()
+                env.IMAGE_TAG = version              
+            }        
+        
+        }
+         }
         stage('Install dependencies') {
             agent {
                 docker {
@@ -62,16 +87,32 @@ pipeline {
             }
         
         }
+   stage('commiting the version to git repo') {
+            steps{
+                withCredentials([
+                    usernamePassword(
+                        credentialsId:"jenkins-github-cred",
+                        usernameVariable:"GITHUB_USERNAME",
+                        passwordVariable:"GITHUB_TOKEN"
+                    )   
+                ]) {
+                sh 'git config user.email "jenkins@pulsewatch.ci"'
+                sh 'git config user.name "pulsewatch-jenkins-bot"'
+                sh "git add api/package.json api/package-lock.json "
+                sh "git commit -m \"ci: bump version to ${IMAGE_TAG}\""
+                sh "git push https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/Youssef-hisham61/pulsewatch.git HEAD:develop"          
+            
+            }
+        }}
         stage('deploy'){
            when {
                 branch 'main'
             }
             steps {
-                    echo "Deploying to production environment..."
+                    echo "Deploy stage will be implemented with Kubernetes in Phase 3"
+                            
             }
-        }    
-    
-    }
+        }   } 
 
     post {
         success {
@@ -82,4 +123,4 @@ pipeline {
             echo "Pipeline failed. Please check the logs for details."
         }
     }
-    }
+        }    
