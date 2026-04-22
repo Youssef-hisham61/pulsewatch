@@ -7,6 +7,12 @@ pipeline {
           //  description:"choose your patching method"
        // )
    // }
+        options {
+         timestamps()
+            timeout(time: 30, unit: 'MINUTES')
+            disableConcurrentBuilds()
+             buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
+    }
     environment {
         DOCKER_REPO = 'yh61/pulsewatch-images-docker-repo'  
     }
@@ -88,7 +94,13 @@ pipeline {
                 sh "git add api/package.json api/package-lock.json "
                 sh "git commit -m \"ci: bump version to ${IMAGE_TAG}\""
                 sh 'git push https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/Youssef-hisham61/pulsewatch.git HEAD:develop'          
-            
+                script {
+                    def commitSha = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    echo "Committed version ${IMAGE_TAG} commited to develop | SHA: ${commitSha}"
+                }
             }
         }}
         stage('deploy'){
@@ -102,12 +114,17 @@ pipeline {
         }   } 
 
     post {
-        success {
-            
-            echo "Pipeline completed successfully!"
-        }
-        failure {
-            echo "Pipeline failed. Please check the logs for details."
-        }
+    always {
+        echo "Cleaning up workspace and logging out of Docker registry"
+        sh 'docker image prune -f'
+        sh 'docker logout'
+        cleanWs()
     }
+    success {   
+        echo "Pipeline completed successfully! Version: ${IMAGE_TAG}"
+    }
+    failure {
+        echo "Pipeline failed. Please check the logs for details."
+    }
+}
         }    
