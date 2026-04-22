@@ -80,7 +80,8 @@ pipeline {
                     )   
                 ]) {
                 sh 'git stash'
-                sh "git checkout ${BRANCH_NAME}"
+                sh "git checkout develop"
+                sh 'git pull origin develop'
                 sh 'git stash pop'
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
