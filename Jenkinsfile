@@ -82,7 +82,9 @@ pipeline {
                         passwordVariable:"GITHUB_TOKEN"
                     )   
                 ]) {
+                sh 'git stash'
                 sh "git checkout ${BRANCH_NAME}"
+                sh 'git stash pop'
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
                 sh "git add api/package.json api/package-lock.json "
