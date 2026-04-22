@@ -18,6 +18,9 @@ pipeline {
     }
     stages {
         stage('increment build version'){
+         when {
+                branch 'develop'
+         }
          steps{
             script {
                 def version = sh (
@@ -31,6 +34,21 @@ pipeline {
             }        
         }
          }
+        stage('read version') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                     def version = sh(
+                script: "cd api && node -e \"console.log(require('./package.json').version)\"",
+                returnStdout: true
+            ).trim()
+            env.IMAGE_TAG = version
+            echo "Deploying version: ${IMAGE_TAG}"
+        }
+    }
+}
         stage('Install dependencies') {
             steps { 
                sh 'cd api && npm install'
