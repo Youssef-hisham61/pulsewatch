@@ -18,7 +18,7 @@ pipeline {
                    script: "cd api && node -e \"console.log(require('./package.json').version)\"",
                    returnStdout: true
                 ).trim()
-                def parts = current.tokenize('.')
+                def parts = version.tokenize('.')
                 def patch = parts[2].toInteger() + 1
                 env.IMAGE_TAG = "${parts[0]}.${parts[1]}.${patch}"
                 echo "Next version will be: ${IMAGE_TAG}"       
