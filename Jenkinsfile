@@ -81,6 +81,7 @@ pipeline {
                 ]) {
                 sh 'git stash'
                 sh "git checkout develop"
+                sh 'git config pull.rebase true'
                 sh 'git pull origin develop'
                 sh 'git stash pop'
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
