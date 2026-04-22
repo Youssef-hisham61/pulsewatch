@@ -1,6 +1,6 @@
 {
   "name": "pulsewatch-api",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "PulseWatch API server — authentication, RBAC, and REST endpoints",
   "main": "index.js",
   "scripts": {
