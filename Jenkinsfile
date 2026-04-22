@@ -13,16 +13,16 @@ pipeline {
     stages {
         stage('increment build version'){
          steps{
-            echo "incrementing build version"    
-            sh   "cd api && npm version patch --no-git-tag-version" 
             script {
                 def version = sh (
                    script: "cd api && node -e \"console.log(require('./package.json').version)\"",
                    returnStdout: true
                 ).trim()
-                env.IMAGE_TAG = version              
+                def parts = version.tokenize('.')
+                def patch = parts[2].toInteger() + 1
+                env.IMAGE_TAG = "${parts[0]}.${parts[1]}.${patch}"
+                echo "Next version will be: ${IMAGE_TAG}"       
             }        
-        
         }
          }
         stage('Install dependencies') {
@@ -69,10 +69,7 @@ pipeline {
         }
    stage('commiting the version to git repo') {
            when {
-                anyOf {
-                     branch 'main'
                      branch 'develop'
-                }
             }
             steps{
                 withCredentials([
@@ -82,14 +79,15 @@ pipeline {
                         passwordVariable:"GITHUB_TOKEN"
                     )   
                 ]) {
-                sh 'git stash'
-                sh "git checkout ${BRANCH_NAME}"
-                sh 'git stash pop'
+                sh "git checkout develop"
+                sh 'git config pull.rebase true'
+                sh 'git pull origin develop'
+                sh 'cd api && npm version patch --no-git-tag-version'
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
                 sh "git add api/package.json api/package-lock.json "
                 sh "git commit -m \"ci: bump version to ${IMAGE_TAG}\""
-                sh 'git push https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/Youssef-hisham61/pulsewatch.git HEAD:$BRANCH_NAME'          
+                sh 'git push https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/Youssef-hisham61/pulsewatch.git HEAD:develop'          
             
             }
         }}
