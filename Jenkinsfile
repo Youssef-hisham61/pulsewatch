@@ -26,22 +26,12 @@ pipeline {
         }
          }
         stage('Install dependencies') {
-            agent {
-                docker {
-                    image 'node:18-alpine'
-                }
-            }
             steps { 
                sh 'cd api && npm install'
                 sh 'cd worker && npm install'
             }
         }
         stage('syntax check') {
-            agent {
-                docker {
-                    image 'node:18-alpine'
-                }
-            }
             steps {
                echo "Checking syntax of API and Worker code, and Nginx configuration"
                sh 'node --check api/index.js'
@@ -49,11 +39,6 @@ pipeline {
                 }
             }
         stage('Tests') {
-            agent {
-                docker {
-                    image 'node:18-alpine'
-                }
-            }
             steps {
                 echo "Running tests..."
                 sh 'cd api && npm install && npm test'
@@ -97,9 +82,7 @@ pipeline {
                         passwordVariable:"GITHUB_TOKEN"
                     )   
                 ]) {
-                sh 'git stash'
                 sh "git checkout ${BRANCH_NAME}"
-                sh 'git stash pop'
                 sh 'git config user.email "jenkins@pulsewatch.ci"'
                 sh 'git config user.name "pulsewatch-jenkins-bot"'
                 sh "git add api/package.json api/package-lock.json "
