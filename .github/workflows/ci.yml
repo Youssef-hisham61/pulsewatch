@@ -4,6 +4,10 @@ on:
     branches:
       - develop
       - main
+      - "ci/**"
+      - "fix/**"
+      - "chore/**"
+  workflow_dispatch:
 
 jobs:
   build-test-push:
