@@ -11,6 +11,7 @@ on:
 
 jobs:
   build-test-push:
+    environment: dockerhub-username
     permissions:
       contents: write
     runs-on: ubuntu-latest
