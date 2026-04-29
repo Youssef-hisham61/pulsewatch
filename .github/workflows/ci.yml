@@ -42,8 +42,13 @@ jobs:
           echo "Running tests..."
           cd api && npm test
 
+      - name: getting output of version bump
+        id: get_version
+        run: echo "version=$(node -p 'require("./api/package.json").version')" >> $GITHUB_OUTPUT
+
       - name: automated version bump
         id: bump_version
+        if: github.ref == 'refs/heads/develop'
         uses: "phips28/gh-action-bump-version@master"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,7 +69,7 @@ jobs:
           context: api
           file: api/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_REPO }}:api-${{ steps.bump_version.outputs.newTag }}
+          tags: ${{ secrets.DOCKER_REPO }}:api-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
 
       - name: build and push docker image (worker)
         uses: docker/build-push-action@v6
@@ -72,7 +77,7 @@ jobs:
           context: worker
           file: worker/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_REPO }}:worker-${{ steps.bump_version.outputs.newTag }}
+          tags: ${{ secrets.DOCKER_REPO }}:worker-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
 
       - name: build and push docker image (nginx)
         uses: docker/build-push-action@v6
@@ -80,7 +85,7 @@ jobs:
           context: nginx
           file: nginx/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_REPO }}:nginx-${{ steps.bump_version.outputs.newTag }}
+          tags: ${{ secrets.DOCKER_REPO }}:nginx-${{ steps.bump_version.outputs.newTag  || steps.get_version.outputs.version }}
 
       - name: build and push docker image (postgres)
         uses: docker/build-push-action@v6
@@ -88,7 +93,7 @@ jobs:
           context: db
           file: db/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_REPO }}:postgres-${{ steps.bump_version.outputs.newTag }}
+          tags: ${{ secrets.DOCKER_REPO }}:postgres-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
 
   deploy:
     needs: build-test-push
