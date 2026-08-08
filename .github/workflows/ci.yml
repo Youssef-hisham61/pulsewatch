@@ -7,6 +7,13 @@ on:
       - "ci/**"
       - "fix/**"
       - "chore/**"
+    # Only build/version-bump when app source changes. Docs, Helm chart, k8s
+    # manifests, cluster config and nginx (built locally by Compose, not shipped
+    # via CI) do not trigger a release.
+    paths:
+      - "api/**"
+      - "worker/**"
+      - "db/**"
   workflow_dispatch:
 
 jobs:
@@ -79,14 +86,6 @@ jobs:
           file: worker/Dockerfile
           push: true
           tags: ${{ secrets.DOCKER_REPO }}:worker-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
-
-      - name: build and push docker image (nginx)
-        uses: docker/build-push-action@v6
-        with:
-          context: nginx
-          file: nginx/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKER_REPO }}:nginx-${{ steps.bump_version.outputs.newTag  || steps.get_version.outputs.version }}
 
       - name: build and push docker image (postgres)
         uses: docker/build-push-action@v6
