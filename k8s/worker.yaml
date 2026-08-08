@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: pulsewatch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulsewatch
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: pulsewatch
+        component: worker
+    spec:
+      containers:
+        - name: worker
+          image: yh61/pulsewatch-images-docker-repo:worker-1.0.8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pulsewatch-app-secrets
+                  key: DATABASE_URL
+            - name: CHECK_INTERVAL_MS
+              value: "30000"
+            - name: NODE_ENV
+              value: development
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 150m
+              memory: 128Mi

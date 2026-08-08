@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: pulsewatch
+spec:
+  clusterIP: None
+  selector:
+    app: pulsewatch
+    component: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: pulsewatch
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulsewatch
+      component: postgres
+  template:
+    metadata:
+      labels:
+        app: pulsewatch
+        component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: yh61/pulsewatch-images-docker-repo:postgres-1.0.8
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pulsewatch-db-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pulsewatch-db-credentials
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: pulsewatch-db-credentials
+                  key: POSTGRES_DB
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dev_db_docker
+                - -d
+                - pulsewatch_DEV
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dev_db_docker
+                - -d
+                - pulsewatch_DEV
+            initialDelaySeconds: 15
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
