@@ -40,16 +40,19 @@ done
 # 6. Secrets (gitignored). Create from the template if you do not have k8s/secrets.yaml:
 #    cp k8s/secrets.example.yaml k8s/secrets.yaml   # then fill in real values
 
-# 7. Apply app manifests in order (secrets.yaml explicitly, NOT the whole dir,
-#    so secrets.example.yaml placeholders never clobber the real secret)
+# 7. Namespace + secrets. The Helm chart references these secrets by name but does
+#    NOT create them (kept external for GitOps / Sealed Secrets later). Apply
+#    secrets.yaml explicitly, never the whole k8s/ dir, so secrets.example.yaml
+#    placeholders never clobber the real secret.
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/secrets.yaml
-kubectl apply -f k8s/postgres.yaml
-kubectl rollout status statefulset/postgres -n pulsewatch --timeout=120s
-kubectl apply -f k8s/api.yaml -f k8s/worker.yaml -f k8s/gateway.yaml \
-              -f k8s/api-hpa.yaml -f k8s/api-pdb.yaml
 
-# 8. cloud-provider-kind: gives LoadBalancer services a real address and publishes
+# 8. Deploy the app with Helm (postgres, api + HPA/PDB, worker, gateway + HTTPRoute)
+helm upgrade --install pulsewatch helm/pulsewatch -n pulsewatch
+kubectl rollout status statefulset/postgres -n pulsewatch --timeout=120s
+kubectl rollout status deployment/api -n pulsewatch --timeout=120s
+
+# 9. cloud-provider-kind: gives LoadBalancer services a real address and publishes
 #    the Gateway to localhost:80. --restart=unless-stopped => auto-starts with Docker.
 docker build -t pulsewatch/cloud-provider-kind:v0.11.1 \
   -f cluster/Dockerfile.cloud-provider-kind cluster/
