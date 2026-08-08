@@ -1,0 +1,17 @@
+PulseWatch {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Images:      {{ .Values.image.repository }}:(api|worker|postgres)-{{ .Values.image.tag }}
+API scaling: {{ if .Values.api.autoscaling.enabled }}HPA {{ .Values.api.autoscaling.minReplicas }}-{{ .Values.api.autoscaling.maxReplicas }} @ {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}% CPU{{ else }}fixed {{ .Values.api.replicas }} replicas{{ end }}
+
+Prerequisites (NOT managed by this chart):
+  - Secrets "{{ .Values.secrets.dbCredentials }}" and "{{ .Values.secrets.appSecrets }}" must exist in the namespace.
+  - GatewayClass "{{ .Values.gateway.className }}" (Envoy Gateway) must be installed.
+  - metrics-server is required for the API HPA.
+
+Check status:
+  kubectl get all -n {{ .Release.Namespace }}
+  kubectl get gateway pulsewatch-gateway -n {{ .Release.Namespace }}
+
+Access (with cloud-provider-kind running):
+  curl http://localhost/health
+  curl http://localhost/ready

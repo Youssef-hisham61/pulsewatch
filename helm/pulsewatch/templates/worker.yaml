@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app: pulsewatch
+    component: worker
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: pulsewatch
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: pulsewatch
+        component: worker
+        {{- include "pulsewatch.commonLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:worker-{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.appSecrets }}
+                  key: DATABASE_URL
+            - name: CHECK_INTERVAL_MS
+              value: "{{ .Values.worker.env.CHECK_INTERVAL_MS }}"
+            - name: NODE_ENV
+              value: "{{ .Values.worker.env.NODE_ENV }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.worker.env.LOG_LEVEL }}"
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

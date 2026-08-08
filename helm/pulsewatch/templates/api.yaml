@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: pulsewatch
+    component: api
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: pulsewatch
+      component: api
+  template:
+    metadata:
+      labels:
+        app: pulsewatch
+        component: api
+        {{- include "pulsewatch.commonLabels" . | nindent 8 }}
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: pulsewatch
+                    component: api
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:api-{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.api.containerPort }}
+          env:
+            - name: PORT
+              value: "{{ .Values.api.containerPort }}"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.appSecrets }}
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.appSecrets }}
+                  key: JWT_SECRET
+            - name: JWT_EXPIRES_IN
+              value: "{{ .Values.api.env.JWT_EXPIRES_IN }}"
+            - name: NODE_ENV
+              value: "{{ .Values.api.env.NODE_ENV }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.api.env.LOG_LEVEL }}"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.containerPort }}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.api.containerPort }}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.containerPort }}
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 5
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    app: pulsewatch
+    component: api
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  selector:
+    app: pulsewatch
+    component: api
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: {{ .Values.api.containerPort }}

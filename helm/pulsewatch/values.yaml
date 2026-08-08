@@ -1,0 +1,72 @@
+# Default values for the pulsewatch chart.
+
+image:
+  repository: yh61/pulsewatch-images-docker-repo
+  # Version tag. Each component's image is <repository>:<component>-<tag>,
+  # e.g. yh61/pulsewatch-images-docker-repo:api-1.0.8
+  tag: "1.0.8"
+  pullPolicy: IfNotPresent
+
+# Secrets are NOT created by this chart. They are managed externally
+# (k8s/secrets.yaml locally; Sealed Secrets / External Secrets under GitOps later)
+# and referenced here by name.
+secrets:
+  dbCredentials: pulsewatch-db-credentials
+  appSecrets: pulsewatch-app-secrets
+
+api:
+  containerPort: 3000
+  service:
+    port: 80
+  # Used only when autoscaling.enabled is false
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  env:
+    JWT_EXPIRES_IN: "7d"
+    NODE_ENV: development
+    LOG_LEVEL: info
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+worker:
+  replicas: 1
+  env:
+    CHECK_INTERVAL_MS: "30000"
+    NODE_ENV: development
+    LOG_LEVEL: info
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
+
+postgres:
+  # Service name is fixed: the external DATABASE_URL secret points at host "postgres"
+  serviceName: postgres
+  service:
+    port: 5432
+  storage:
+    size: 1Gi
+    # storageClassName: "" -> use the cluster default (kind: local-path)
+    storageClassName: ""
+  resources: {}
+
+gateway:
+  className: eg
+  port: 80
+  # Empty -> the HTTPRoute matches all hostnames. Set a list to restrict.
+  hostnames: []
