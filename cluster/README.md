@@ -69,6 +69,19 @@ curl http://localhost/ready    # {"status":"ready"}  (checks DB)
 kubectl get gateway pulsewatch-gateway -n pulsewatch   # PROGRAMMED=True
 ```
 
+## Pause / resume
+
+The cluster does not need rebuilding between sessions. To turn it off and back on
+(data, images and the Helm release persist):
+
+```bash
+./cluster/stop.sh     # stop the kind nodes + cloud-provider-kind
+./cluster/start.sh    # start, wait for readiness, refresh the LB, verify localhost
+```
+
+Nodes use restart=on-failure, so they do not auto-start after a machine reboot;
+run start.sh to bring everything back.
+
 ## Notes
 
 - cloud-provider-kind must run on the host (it needs the Docker socket + CLI to
