@@ -27,6 +27,37 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - backendRefs:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
         - name: api
           port: {{ .Values.api.service.port }}
+{{- if .Values.gateway.rateLimit.enabled }}
+---
+# Separate route for /auth so it can carry a stricter rate limit. A more specific
+# PathPrefix (/auth) takes precedence over the default (/) per Gateway API.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pulsewatch-auth
+  labels:
+    app: pulsewatch
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: pulsewatch-gateway
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /auth
+      backendRefs:
+        - name: api
+          port: {{ .Values.api.service.port }}
+{{- end }}

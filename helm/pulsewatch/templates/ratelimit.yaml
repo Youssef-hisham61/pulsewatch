@@ -1,0 +1,43 @@
+{{- if .Values.gateway.rateLimit.enabled }}
+# Local rate limiting (shared bucket per route), replacing the nginx rate limits
+# from the Docker Compose path. Not per-client-IP: see values.yaml note.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: pulsewatch-api-ratelimit
+  labels:
+    app: pulsewatch
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: pulsewatch-api
+  rateLimit:
+    type: Local
+    local:
+      rules:
+        - limit:
+            requests: {{ .Values.gateway.rateLimit.default.requests }}
+            unit: {{ .Values.gateway.rateLimit.default.unit }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: pulsewatch-auth-ratelimit
+  labels:
+    app: pulsewatch
+    {{- include "pulsewatch.commonLabels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: pulsewatch-auth
+  rateLimit:
+    type: Local
+    local:
+      rules:
+        - limit:
+            requests: {{ .Values.gateway.rateLimit.auth.requests }}
+            unit: {{ .Values.gateway.rateLimit.auth.unit }}
+{{- end }}

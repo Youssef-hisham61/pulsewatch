@@ -70,3 +70,17 @@ gateway:
   port: 80
   # Empty -> the HTTPRoute matches all hostnames. Set a list to restrict.
   hostnames: []
+  # Local rate limiting via Envoy Gateway BackendTrafficPolicy, replacing the
+  # nginx rate limits from the Docker Compose path. NOTE: local rate limiting is
+  # a shared bucket per route (not per-client-IP like nginx). Per-IP needs global
+  # rate limiting (Redis + rate-limit service).
+  rateLimit:
+    enabled: true
+    # Applies to /auth (login/register) — stricter, mirrors nginx auth_limit 3r/s
+    auth:
+      requests: 3
+      unit: Second
+    # Applies to everything else — mirrors nginx api_limit 10r/s
+    default:
+      requests: 10
+      unit: Second
