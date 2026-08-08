@@ -118,6 +118,61 @@ cd api && npm start
 cd worker && npm start
 ```
 
+## Running on Kubernetes
+
+Phase 4 runs PulseWatch on Kubernetes. Locally that's a 3-node
+[kind](https://kind.sigs.k8s.io/) cluster (1 control-plane, 2 workers); the same
+manifests target a real cluster (EKS) later. A few things change from the Docker
+Compose setup:
+
+- **No Nginx.** Ingress is handled by the **Gateway API** (Envoy Gateway), not a
+  hand-rolled reverse proxy. A `Gateway` listens on port 80 and an `HTTPRoute`
+  forwards traffic to the API service. I used Gateway API instead of Ingress on
+  purpose — I'd already done Ingress during my CKA.
+- **Postgres is a StatefulSet** with a headless Service and a PVC, instead of a
+  Compose service with a named volume.
+- **The API tier is horizontally scalable and HA** — something the single-node
+  Compose setup can't express.
+
+### What's deployed (`k8s/`)
+
+| Manifest | Resource(s) |
+| --- | --- |
+| `namespace.yaml` | `pulsewatch` namespace |
+| `secrets.yaml` | DB credentials + app secrets (gitignored — see `secrets.example.yaml`) |
+| `postgres.yaml` | StatefulSet + headless Service + 1Gi PVC |
+| `api.yaml` | Deployment + ClusterIP Service (80 → 3000) |
+| `worker.yaml` | Deployment (1 replica, no Service) |
+| `gateway.yaml` | Gateway + HTTPRoute |
+| `gatewayclass.yaml` | GatewayClass `eg` (Envoy Gateway controller) |
+| `api-hpa.yaml` | HorizontalPodAutoscaler (2–5 replicas @ 70% CPU) |
+| `api-pdb.yaml` | PodDisruptionBudget (`minAvailable: 1`) |
+
+### High availability (API tier)
+
+The API is stateless, so it's the part that scales. It runs with an **HPA**
+(2→5 replicas on CPU, via metrics-server), a **PodDisruptionBudget** so node
+drains never take every replica down at once, and **pod anti-affinity** spreading
+replicas across nodes so losing a node doesn't lose the API.
+
+Postgres and the worker stay single-replica on purpose: scaling a raw Postgres
+StatefulSet would split-brain across independent volumes, and a second worker
+would double every monitoring check. Real database HA (an operator such as
+CloudNativePG) is planned for a later phase.
+
+### Bring it up
+
+The full reproducible setup — cluster, Envoy Gateway, metrics-server, image
+loading, and `cloud-provider-kind` (which gives the Gateway a real LoadBalancer
+address on `localhost:80`) — lives in [`cluster/README.md`](cluster/README.md).
+Once it's running:
+
+```bash
+curl http://localhost/health   # {"status":"ok"}
+curl http://localhost/ready    # {"status":"ready"}  (checks the DB)
+kubectl get all -n pulsewatch
+```
+
 ## Project Structure
 
 ```
@@ -142,7 +197,18 @@ pulsewatch/
 │   └── schema.sql
 ├── nginx/
 │   ├── Dockerfile
-│   └── nginx.conf        # Reverse proxy + rate limiting config
+│   └── nginx.conf        # Reverse proxy + rate limiting (Docker Compose only)
+├── k8s/                  # Kubernetes manifests (Phase 4)
+│   ├── namespace.yaml
+│   ├── postgres.yaml     # StatefulSet + headless Service + PVC
+│   ├── api.yaml          # Deployment + Service (HPA/PDB in api-hpa/pdb.yaml)
+│   ├── worker.yaml
+│   ├── gateway.yaml      # Gateway API: Gateway + HTTPRoute
+│   ├── gatewayclass.yaml
+│   └── secrets.example.yaml
+├── cluster/              # Local kind bring-up (see cluster/README.md)
+│   ├── kind-config.yaml
+│   └── Dockerfile.cloud-provider-kind
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -369,10 +435,11 @@ change between local, Docker, Kubernetes, and AWS.
 | ----- | ------------------------------- | -------- |
 | 1     | Node.js + PostgreSQL            | ✅ Done  |
 | 2     | Docker + Docker Compose + Nginx | ✅ Done  |
-| 3     | Kubernetes + Helm               | Upcoming |
-| 4     | Jenkins CI/CD + Terraform       | Upcoming |
-| 5     | Prometheus + Grafana            | Upcoming |
-| 6     | AWS EKS + RDS                   | Upcoming |
+| 3     | Jenkins + GitHub Actions CI/CD  | ✅ Done  |
+| 4     | Kubernetes + Helm + ArgoCD      | 🔨 In progress — raw manifests + API HA done; Helm chart next |
+| 5     | Terraform                       | Upcoming |
+| 6     | Prometheus + Grafana            | Upcoming |
+| 7     | AWS EKS + RDS                   | Upcoming |
 
 ```
 
