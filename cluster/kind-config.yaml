@@ -1,0 +1,9 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: pulsewatch
+# No extraPortMappings: host port 80 is owned by cloud-provider-kind, which
+# publishes LoadBalancer services (the Envoy Gateway) to localhost:80.
+nodes:
+- role: control-plane
+- role: worker
+- role: worker

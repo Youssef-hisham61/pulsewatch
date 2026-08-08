@@ -1,0 +1,13 @@
+# Self-contained cloud-provider-kind image.
+# The official registry.k8s.io image does not resolve for these versions, so we
+# wrap the release binary. docker-cli is required: cloud-provider-kind shells out
+# to the `docker` CLI (not just the socket) to create load-balancer containers.
+#
+# Build:  docker build -t pulsewatch/cloud-provider-kind:v0.11.1 -f cluster/Dockerfile.cloud-provider-kind cluster/
+FROM alpine:3.20
+ARG CPK_VERSION=0.11.1
+RUN apk add --no-cache ca-certificates docker-cli curl \
+ && curl -sL "https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/v${CPK_VERSION}/cloud-provider-kind_${CPK_VERSION}_linux_amd64.tar.gz" \
+    | tar xz -C /usr/local/bin cloud-provider-kind \
+ && apk del curl
+ENTRYPOINT ["/usr/local/bin/cloud-provider-kind"]
