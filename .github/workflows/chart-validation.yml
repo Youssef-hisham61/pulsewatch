@@ -1,0 +1,49 @@
+name: chart validation
+# Validates deploy config (Helm chart + raw k8s manifests) without building
+# images, bumping the version, or deploying. Complements ci.yml, which only
+# handles app source (api/worker/db).
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - "ci/**"
+      - "fix/**"
+      - "chore/**"
+    paths:
+      - "helm/**"
+      - "k8s/**"
+  pull_request:
+    paths:
+      - "helm/**"
+      - "k8s/**"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint helm/pulsewatch
+
+      - name: helm template (render must succeed)
+        run: helm template pulsewatch helm/pulsewatch -n pulsewatch > rendered.yaml
+
+      - name: install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar xz -C /usr/local/bin kubeconform
+
+      # -ignore-missing-schemas skips CRD-backed kinds (Gateway, HTTPRoute,
+      # GatewayClass, BackendTrafficPolicy) while still validating core resources.
+      - name: validate rendered chart
+        run: kubeconform -strict -summary -ignore-missing-schemas rendered.yaml
+
+      - name: validate raw k8s manifests
+        run: kubeconform -strict -summary -ignore-missing-schemas k8s/
