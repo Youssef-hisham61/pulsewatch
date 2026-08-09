@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulsewatch
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Youssef-hisham61/pulsewatch.git
+    targetRevision: develop
+    path: helm/pulsewatch
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pulsewatch
+  # Automated GitOps: ArgoCD auto-syncs when Git changes (prune removes resources
+  # deleted from Git; selfHeal reverts manual cluster edits back to Git).
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
