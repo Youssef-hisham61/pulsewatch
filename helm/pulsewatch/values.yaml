@@ -13,6 +13,10 @@ image:
 secrets:
   dbCredentials: pulsewatch-db-credentials
   appSecrets: pulsewatch-app-secrets
+  # When true, the chart ships SealedSecrets (encrypted, committed to Git) that the
+  # sealed-secrets controller decrypts into the two Secrets above. Set false to
+  # manage secrets another way (e.g. External Secrets on EKS) without chart changes.
+  sealed: true
 
 api:
   containerPort: 3000
