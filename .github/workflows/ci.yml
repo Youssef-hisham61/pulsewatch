@@ -95,6 +95,22 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKER_REPO }}:postgres-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
 
+      # GitOps tag propagation: point the Helm chart at the freshly built images so
+      # ArgoCD (watching develop) deploys the new version. Uses the SAME tag the
+      # images were pushed with, so chart and registry never drift.
+      - name: propagate version to Helm chart
+        if: github.ref == 'refs/heads/develop' && steps.bump_version.outputs.newTag != ''
+        env:
+          NEW_TAG: ${{ steps.bump_version.outputs.newTag }}
+        run: |
+          sed -i "s|^  tag: .*|  tag: \"${NEW_TAG}\"|" helm/pulsewatch/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add helm/pulsewatch/values.yaml
+          git commit -m "chore(helm): set image.tag to ${NEW_TAG} [skip ci]" \
+            || { echo "no chart change to commit"; exit 0; }
+          git push
+
   deploy:
     needs: build-test-push
     if: success() && github.ref == 'refs/heads/main'
