@@ -1,0 +1,146 @@
+name: FULL CI/CD workflow
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - "ci/**"
+      - "fix/**"
+      - "chore/**"
+    # Only build/version-bump when app source changes. Docs, Helm chart, k8s
+    # manifests, cluster config and nginx (built locally by Compose, not shipped
+    # via CI) do not trigger a release.
+    paths:
+      - "api/**"
+      - "worker/**"
+      - "db/**"
+  # Run the test gate on PRs too, so a release PR into main is verified
+  # before the merge rather than after it.
+  pull_request:
+    paths:
+      - "api/**"
+      - "worker/**"
+      - "db/**"
+  workflow_dispatch:
+
+jobs:
+  build-test-push:
+    environment: dockerhub-username
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: cache layer
+        uses: actions/cache@v4
+        with:
+          path: |
+            api/node_modules
+            worker/node_modules
+          key: node-modules-${{ hashFiles('api/package-lock.json', 'worker/package-lock.json') }}
+
+      - name: install dependencies
+        run: |
+          cd api && npm install
+          cd ../worker && npm install
+
+      - name: syntax check
+        run: |
+          echo "Checking syntax..."
+          node --check api/index.js
+          node --check worker/index.js
+
+      - name: run tests
+        run: |
+          echo "Running tests..."
+          cd api && npm test
+
+      - name: getting output of version bump
+        id: get_version
+        run: echo "version=$(node -p 'require("./api/package.json").version')" >> $GITHUB_OUTPUT
+
+      - name: automated version bump
+        id: bump_version
+        if: github.ref == 'refs/heads/develop'
+        uses: "phips28/gh-action-bump-version@master"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGEJSON_DIR: api
+
+      # Publishing happens ONLY on develop, the single branch that mints a version.
+      # Any other branch (main, ci/**, fix/**, chore/**, pull requests) would reuse
+      # the version already in package.json and overwrite an image tag that was
+      # already released, so those runs stop at the test gate above.
+      - name: setup Docker Buildx
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/setup-buildx-action@v3
+
+      - name: docker login
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: build and push Docker image (api)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          file: api/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_REPO }}:api-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
+
+      - name: build and push docker image (worker)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: worker
+          file: worker/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_REPO }}:worker-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
+
+      - name: build and push docker image (postgres)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: db
+          file: db/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_REPO }}:postgres-${{ steps.bump_version.outputs.newTag || steps.get_version.outputs.version }}
+
+      # GitOps tag propagation: point the Helm chart at the freshly built images so
+      # ArgoCD (watching develop) deploys the new version. Uses the SAME tag the
+      # images were pushed with, so chart and registry never drift.
+      - name: propagate version to Helm chart
+        if: github.ref == 'refs/heads/develop' && steps.bump_version.outputs.newTag != ''
+        env:
+          NEW_TAG: ${{ steps.bump_version.outputs.newTag }}
+        run: |
+          sed -i "s|^  tag: .*|  tag: \"${NEW_TAG}\"|" helm/pulsewatch/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add helm/pulsewatch/values.yaml
+          git commit -m "chore(helm): set image.tag to ${NEW_TAG} [skip ci]" \
+            || { echo "no chart change to commit"; exit 0; }
+          git push
+
+  # main is a release branch: it verifies and records what is being promoted, it
+  # does not build. The images for this version were already published from
+  # develop, and the cluster is reconciled by ArgoCD from the Helm chart in Git.
+  deploy:
+    needs: build-test-push
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: release summary
+        env:
+          VERSION: ${{ needs.build-test-push.outputs.version }}
+        run: |
+          echo "Promoting pulsewatch v${VERSION} to main."
+          echo "Images already published from develop: api-${VERSION}, worker-${VERSION}, postgres-${VERSION}"
+          echo "Cluster rollout is handled by ArgoCD from helm/pulsewatch (GitOps), not from this job."

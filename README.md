@@ -118,6 +118,88 @@ cd api && npm start
 cd worker && npm start
 ```
 
+## Running on Kubernetes
+
+Phase 4 runs PulseWatch on Kubernetes, packaged as a **Helm chart** and deployed by
+**ArgoCD** straight from this repo (GitOps). Locally that's a 3-node
+[kind](https://kind.sigs.k8s.io/) cluster (1 control-plane, 2 workers); the same
+chart targets a real cluster (EKS) later with different values. Several things
+change from the Docker Compose setup:
+
+- **No Nginx.** Ingress is the **Gateway API** (Envoy Gateway), not a hand-rolled
+  reverse proxy. A `Gateway` listens on port 80 and `HTTPRoute`s forward to the API;
+  a `BackendTrafficPolicy` applies the rate limits Nginx used to (3 r/s on `/auth`,
+  10 r/s elsewhere). I used Gateway API instead of Ingress on purpose, having already
+  done Ingress during my CKA.
+- **Postgres is a StatefulSet** with a headless Service and a PVC, instead of a
+  Compose service with a named volume.
+- **The API tier is horizontally scalable and HA** — something the single-node
+  Compose setup can't express.
+- **Secrets live in Git, encrypted** (Sealed Secrets) — no plaintext in the repo.
+- **Deployment is GitOps** — push to Git, ArgoCD reconciles the cluster to match.
+
+### The Helm chart (`helm/pulsewatch`)
+
+Everything is one parameterized chart. `values.yaml` drives the image tag, replica
+counts, resources, autoscaling, storage, rate limits, and secret handling, so the
+same chart deploys to kind now and EKS later without duplicated YAML.
+
+| Templated resource | Purpose |
+| --- | --- |
+| postgres StatefulSet + headless Service + PVC | database with persistent storage |
+| api Deployment + ClusterIP Service (80 → 3000) | stateless API |
+| api HorizontalPodAutoscaler + PodDisruptionBudget | autoscaling + HA (below) |
+| worker Deployment (no Service) | background poller |
+| Gateway + HTTPRoutes | Gateway API ingress on port 80 |
+| BackendTrafficPolicy (×2) | per-route rate limiting |
+| SealedSecrets (×2) | encrypted DB + app secrets |
+
+`GatewayClass eg` is installed once as cluster infra, and the raw manifests under
+`k8s/` are kept as a pre-Helm reference and rollback.
+
+### High availability (API tier)
+
+The API is stateless, so it's the part that scales. It runs with an **HPA**
+(2→5 replicas on CPU, via metrics-server), a **PodDisruptionBudget** so node
+drains never take every replica down at once, and **pod anti-affinity** spreading
+replicas across nodes so losing a node doesn't lose the API.
+
+Postgres and the worker stay single-replica on purpose: scaling a raw Postgres
+StatefulSet would split-brain across independent volumes, and a second worker
+would double every monitoring check. Real database HA (an operator such as
+CloudNativePG) is planned for a later phase.
+
+### GitOps with ArgoCD
+
+An ArgoCD `Application` ([`gitops/`](gitops/Pulsewatch-application.yaml)) points at
+`helm/pulsewatch` on the `develop` branch with automated sync (prune + self-heal).
+ArgoCD renders the chart and reconciles the cluster to match Git, so a merge is a
+deploy and manual drift gets reverted. Secrets flow the same way: the chart ships
+**SealedSecrets** (encrypted, safe to commit), which the in-cluster sealed-secrets
+controller decrypts into the Secrets the app uses.
+
+### CI/CD (GitHub Actions)
+
+Two path-filtered pipelines keep code and config concerns separate:
+
+- **`ci.yml`** (on `api/`, `worker/`, `db/` changes) runs tests, bumps the version,
+  builds and pushes the images, then writes the new tag back into the chart's
+  `values.yaml` so ArgoCD deploys it.
+- **`chart-validation.yml`** (on `helm/`, `k8s/` changes) runs `helm lint`,
+  `helm template`, and `kubeconform` — no build, no deploy, just catches broken config.
+
+### Bring it up
+
+The full reproducible setup — kind, Envoy Gateway, metrics-server, Sealed Secrets,
+ArgoCD, and `cloud-provider-kind` (which gives the Gateway a real LoadBalancer on
+`localhost:80`) — lives in [`cluster/README.md`](cluster/README.md). Once it's running:
+
+```bash
+curl http://localhost/health   # {"status":"ok"}
+curl http://localhost/ready    # {"status":"ready"}  (checks the DB)
+kubectl get application pulsewatch -n argocd   # SYNCED / HEALTHY
+```
+
 ## Project Structure
 
 ```
@@ -142,7 +224,22 @@ pulsewatch/
 │   └── schema.sql
 ├── nginx/
 │   ├── Dockerfile
-│   └── nginx.conf        # Reverse proxy + rate limiting config
+│   └── nginx.conf        # Reverse proxy + rate limiting (Docker Compose only)
+├── helm/pulsewatch/      # Helm chart — the deploy artifact for Phase 4
+│   ├── Chart.yaml
+│   ├── values.yaml       # image tag, replicas, resources, HPA, rate limits, secrets
+│   └── templates/        # postgres, api (+hpa/pdb), worker, gateway, ratelimit, sealed-secrets
+├── gitops/               # ArgoCD Application (GitOps) -> helm/pulsewatch on develop
+│   └── Pulsewatch-application.yaml
+├── k8s/                  # Raw manifests: pre-Helm reference / rollback + GatewayClass
+│   ├── namespace.yaml  postgres.yaml  api.yaml  worker.yaml
+│   ├── gateway.yaml  gatewayclass.yaml  api-hpa.yaml  api-pdb.yaml
+│   └── secrets.example.yaml
+├── cluster/              # Local kind bring-up + on/off scripts (see cluster/README.md)
+│   ├── kind-config.yaml  Dockerfile.cloud-provider-kind
+│   ├── start.sh  stop.sh
+│   └── README.md
+├── .github/workflows/    # ci.yml (build/push/bump) + chart-validation.yml
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -369,10 +466,11 @@ change between local, Docker, Kubernetes, and AWS.
 | ----- | ------------------------------- | -------- |
 | 1     | Node.js + PostgreSQL            | ✅ Done  |
 | 2     | Docker + Docker Compose + Nginx | ✅ Done  |
-| 3     | Kubernetes + Helm               | Upcoming |
-| 4     | Jenkins CI/CD + Terraform       | Upcoming |
-| 5     | Prometheus + Grafana            | Upcoming |
-| 6     | AWS EKS + RDS                   | Upcoming |
+| 3     | Jenkins + GitHub Actions CI/CD  | ✅ Done  |
+| 4     | Kubernetes + Helm + ArgoCD      | ✅ Done — Helm chart, API HA, Gateway API + rate limiting, Sealed Secrets, GitOps via ArgoCD |
+| 5     | Terraform                       | Upcoming |
+| 6     | Prometheus + Grafana            | Upcoming |
+| 7     | AWS EKS + RDS                   | Upcoming |
 
 ```
 

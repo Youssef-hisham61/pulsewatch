@@ -8,3 +8,8 @@ CLAUDE.md
 .dockerignore
 *.tar.gz
 .DS_Store
+
+# Kubernetes secrets - real values never committed (use secrets.example.yaml as template)
+k8s/secrets.yaml
+
+phase4-handoff.md
