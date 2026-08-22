@@ -9,36 +9,40 @@ JWT auth and role-based access control.
 
 Four containerized services working together — no shared code between the application processes:
 
-```
-                         ┌──────────────────────────┐
-                         │         Nginx            │
-                         │    (reverse proxy)       │
-                         │     rate limiting        │
-                         └────────────┬─────────────┘
-                                      │ port 80
-                         ┌────────────▼─────────────┐       ┌──────────────────────────┐
-                         │       API Server         │       │     Background Worker    │
-                         │  (Express · JWT · RBAC)  │       │  (polls every 30 s)      │
-                         │                          │       │                          │
-                         │  POST  /auth/register    │       │  SELECT * FROM services  │
-                         │  POST  /auth/login       │       │  fetch each URL          │
-                         │  GET   /services         │       │  INSERT monitoring_result│
-                         │  POST  /services         │       └────────────┬─────────────┘
-                         │  DELETE /services/:id    │                    │
-                         │  GET   /services/:id/    │                    │ reads / writes
-                         │        results           │                    │
-                         │  GET   /health           │       ┌────────────▼─────────────┐
-                         │  GET   /ready  ──────────┼──────▶│       PostgreSQL         │
-                         └──────────────────────────┘       └──────────────────────────┘
+```mermaid
+flowchart TB
+    client["Client"]
+
+    subgraph edge["Edge"]
+        proxy["Nginx (Compose)<br/>or Gateway API (Kubernetes)<br/>rate limiting - port 80"]
+    end
+
+    subgraph app["Application"]
+        api["<b>API Server</b><br/>Express · JWT · RBAC<br/><br/>/auth/register · /auth/login<br/>/services (GET POST DELETE)<br/>/services/:id/results<br/>/health · /ready"]
+        worker["<b>Background Worker</b><br/>polls every 30s<br/><br/>1. SELECT services<br/>2. fetch each URL<br/>3. INSERT result"]
+    end
+
+    db[("<b>PostgreSQL</b><br/>roles · users<br/>services<br/>monitoring_results")]
+    targets["Monitored endpoints<br/>(the URLs you register)"]
+
+    client -->|HTTP| proxy
+    proxy --> api
+    api <-->|read / write| db
+    worker <-->|read / write| db
+    worker -.->|health check| targets
+
+    classDef store fill:#1f2937,stroke:#4b5563,color:#f9fafb
+    class db store
 ```
 
-The API handles requests and auth. The worker runs independently in
-the background checking services and writing results. Both talk only
-through the database — no IPC, no shared memory. Nginx sits in front
-of the API as a reverse proxy, handling all incoming traffic on port 80.
+**The API and the worker never talk to each other.** They share no code, no
+IPC, no memory — only the database. That is the whole design: either one can be
+restarted, rebuilt, or scaled without the other noticing.
 
-I built it this way intentionally so each service can be containerized
-and scaled independently in later phases.
+I built it this way on purpose: the stateless API is the part that scales
+horizontally, while the worker stays single-replica (two workers would double
+every monitoring check). That separation is what makes the Kubernetes phase
+below possible.
 
 ## Running with Docker (the recommended way) (stable)
 
@@ -138,6 +142,54 @@ change from the Docker Compose setup:
 - **Secrets live in Git, encrypted** (Sealed Secrets) — no plaintext in the repo.
 - **Deployment is GitOps** — push to Git, ArgoCD reconciles the cluster to match.
 
+### The full cycle — commit to running pod
+
+Nothing in this loop is triggered by hand. A commit is the only input, and the
+cluster converges on it:
+
+```mermaid
+flowchart LR
+    dev["<b>Developer</b><br/>feature branch"]
+    develop["<b>develop</b><br/>integration branch"]
+    main["<b>main</b><br/>release branch"]
+
+    ci["<b>ci.yml</b><br/>jest → version bump<br/>→ build 3 images"]
+    cv["<b>chart-validation.yml</b><br/>helm lint · template<br/>· kubeconform"]
+    gate["<b>release gate</b><br/>tests only<br/>NO publish, NO bump"]
+
+    hub[("<b>DockerHub</b><br/>private registry<br/>api · worker · postgres")]
+    argo["<b>ArgoCD</b><br/>automated sync<br/>prune + self-heal"]
+    k8s["<b>kind cluster</b><br/>Gateway :80<br/>api ×2-5 · worker · postgres"]
+    users["Users"]
+
+    dev -->|PR| develop
+    develop -->|"changed api / worker / db"| ci
+    develop -->|"changed helm / k8s"| cv
+    ci -->|"push tagged images"| hub
+    ci -->|"write image.tag into values.yaml<br/>commit (skip ci)"| develop
+    develop -->|"ArgoCD watches this branch"| argo
+    argo -->|"render chart + apply"| k8s
+    hub -.->|"image pull"| k8s
+    k8s -->|"localhost:80"| users
+    develop -->|"release PR"| main
+    main --> gate
+
+    classDef store fill:#1f2937,stroke:#4b5563,color:#f9fafb
+    class hub store
+```
+
+Two details in there matter more than they look:
+
+**The tag write-back closes the loop.** After CI bumps the version and pushes
+`api-1.0.9`, it commits that tag straight into the chart's `values.yaml`. Without
+that step the registry and the chart drift apart and you deploy a version you
+never built. The commit carries `[skip ci]` so it can't trigger itself.
+
+**Publishing only happens on `develop`.** It's the one branch that mints a
+version, so it's the only branch allowed to publish. Every other branch — `main`
+included — stops at the test gate, because reusing the version already in
+`package.json` would overwrite an image tag that was already released.
+
 ### The Helm chart (`helm/pulsewatch`)
 
 Everything is one parameterized chart. `values.yaml` drives the image tag, replica
@@ -184,9 +236,13 @@ Two path-filtered pipelines keep code and config concerns separate:
 
 - **`ci.yml`** (on `api/`, `worker/`, `db/` changes) runs tests, bumps the version,
   builds and pushes the images, then writes the new tag back into the chart's
-  `values.yaml` so ArgoCD deploys it.
+  `values.yaml` so ArgoCD deploys it. Publishing is guarded to `develop`; on every
+  other branch the job stops after the tests.
 - **`chart-validation.yml`** (on `helm/`, `k8s/` changes) runs `helm lint`,
   `helm template`, and `kubeconform` — no build, no deploy, just catches broken config.
+
+Both also run on pull requests, and both are **required status checks** on `main`,
+so a release PR has to be green before it can merge.
 
 ### Bring it up
 
@@ -270,10 +326,15 @@ Protected endpoints require a JWT in the Authorization header:
 Authorization: Bearer <token>
 ```
 
-All traffic goes through Nginx on port 80. Rate limiting is applied:
+All traffic enters on port 80 — through Nginx under Docker Compose, through the
+Gateway on Kubernetes. Both apply the same limits:
 
-- `/auth/` endpoints — 3 requests per second per IP
-- All other endpoints — 10 requests per second per IP
+- `/auth/` endpoints — 3 requests per second
+- All other endpoints — 10 requests per second
+
+One difference worth knowing: Nginx limits **per client IP**, while Envoy's local
+rate limiting is a **shared bucket per route**. Per-IP limiting on Kubernetes needs
+global rate limiting (a Redis-backed rate-limit service), which isn't set up here.
 
 ---
 
@@ -471,7 +532,3 @@ change between local, Docker, Kubernetes, and AWS.
 | 5     | Terraform                       | Upcoming |
 | 6     | Prometheus + Grafana            | Upcoming |
 | 7     | AWS EKS + RDS                   | Upcoming |
-
-```
-
-```

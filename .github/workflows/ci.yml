@@ -14,13 +14,11 @@ on:
       - "api/**"
       - "worker/**"
       - "db/**"
-  # Run the test gate on PRs too, so a release PR into main is verified
-  # before the merge rather than after it.
+  # Run the test gate on every PR, deliberately WITHOUT a paths filter. This job
+  # is a required status check on main, and a workflow skipped by a paths filter
+  # never reports a status at all, so a PR that misses the filter would block
+  # forever waiting on a check that will never arrive. The suite takes ~15s.
   pull_request:
-    paths:
-      - "api/**"
-      - "worker/**"
-      - "db/**"
   workflow_dispatch:
 
 jobs:
