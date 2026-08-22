@@ -159,6 +159,7 @@ flowchart LR
 
     hub[("<b>DockerHub</b><br/>private registry<br/>api · worker · postgres")]
     argo["<b>ArgoCD</b><br/>automated sync<br/>prune + self-heal"]
+    chart["<b>Helm chart</b><br/>helm/pulsewatch<br/>values.yaml → templates"]
     k8s["<b>kind cluster</b><br/>Gateway :80<br/>api ×2-5 · worker · postgres"]
     users["Users"]
 
@@ -168,7 +169,8 @@ flowchart LR
     ci -->|"push tagged images"| hub
     ci -->|"write image.tag into values.yaml<br/>commit (skip ci)"| develop
     develop -->|"ArgoCD watches this branch"| argo
-    argo -->|"render chart + apply"| k8s
+    argo -->|"reads"| chart
+    chart -->|"helm template + apply"| k8s
     hub -.->|"image pull"| k8s
     k8s -->|"localhost:80"| users
     develop -->|"release PR"| main
@@ -208,6 +210,68 @@ same chart deploys to kind now and EKS later without duplicated YAML.
 
 `GatewayClass eg` is installed once as cluster infra, and the raw manifests under
 `k8s/` are kept as a pre-Helm reference and rollback.
+
+### What that looks like on the cluster
+
+Solid arrows are the request and data path; dotted arrows are control — something
+watching, scaling, guarding, or decrypting:
+
+```mermaid
+flowchart TB
+    users["<b>Users</b><br/>localhost:80"]
+
+    subgraph infra["Cluster infrastructure - installed once, outside the chart"]
+        direction LR
+        gwc["<b>GatewayClass eg</b><br/>Envoy Gateway controller"]
+        ms["<b>metrics-server</b><br/>supplies pod CPU"]
+        ssc["<b>sealed-secrets controller</b><br/>holds the private key"]
+        argo["<b>ArgoCD</b><br/>watches develop"]
+    end
+
+    subgraph ns["namespace pulsewatch - everything below is templated by the Helm chart"]
+        gw["<b>Gateway</b><br/>listener :80"]
+        r1["HTTPRoute /auth<br/>+ BackendTrafficPolicy 3 r/s"]
+        r2["HTTPRoute /*<br/>+ BackendTrafficPolicy 10 r/s"]
+        svc["<b>Service api</b><br/>ClusterIP 80 → 3000"]
+        api["<b>Deployment api</b><br/>2-5 pods<br/>anti-affinity across nodes"]
+        hpa["<b>HPA</b><br/>target CPU 70%"]
+        pdb["<b>PodDisruptionBudget</b><br/>minAvailable 1"]
+        worker["<b>Deployment worker</b><br/>1 pod - single by design"]
+        sts["<b>StatefulSet postgres</b><br/>1 pod"]
+        pvc[("<b>PVC</b><br/>persistent storage")]
+        sealed["<b>SealedSecrets ×2</b><br/>encrypted, committed to Git"]
+        sec["<b>Secrets ×2</b><br/>db-credentials · app-secrets"]
+    end
+
+    users --> gw
+    gw --> r1
+    gw --> r2
+    r1 --> svc
+    r2 --> svc
+    svc --> api
+    api --> sts
+    worker --> sts
+    sts --> pvc
+
+    gwc -.->|programs| gw
+    ms -.-> hpa
+    hpa -.->|scales| api
+    pdb -.->|guards| api
+    argo -.->|"helm template + apply"| gw
+    sealed -.->|decrypted by| ssc
+    ssc -.->|creates| sec
+    sec -.->|injected as env| api
+    sec -.->|injected as env| worker
+    sec -.->|injected as env| sts
+
+    classDef store fill:#1f2937,stroke:#4b5563,color:#f9fafb
+    class pvc store
+```
+
+The split in that picture is the point: **the boxed cluster infrastructure is
+installed once and is not part of the app**, while everything in the namespace is
+rendered from `values.yaml`. That's what makes the same chart deployable to EKS
+later — only the values change, not the templates.
 
 ### High availability (API tier)
 
