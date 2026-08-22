@@ -13,10 +13,10 @@ on:
     paths:
       - "helm/**"
       - "k8s/**"
+  # No paths filter on PRs: this job is a required status check on main, and a
+  # workflow skipped by a paths filter never reports a status, which would block
+  # the PR forever. Validation takes ~5s, so it runs on every PR.
   pull_request:
-    paths:
-      - "helm/**"
-      - "k8s/**"
   workflow_dispatch:
 
 jobs:
